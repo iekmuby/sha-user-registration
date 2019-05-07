@@ -8,6 +8,8 @@ License: GPLv2
 Text Domain: sha-ureg
 */
 
+if ( ! defined( 'ABSPATH' ) ) exit; // Exit if accessed directly
+
 /* Variables */
 if ( isset( $sha_ureg_module_name ) ) {
 	die( 'sha-ureg duplicating module name' );
@@ -550,3 +552,196 @@ function sha_ureg_settings_page_content() {
 
 	include $template;
 }
+
+
+/*
+//add_filter( 'views_users', 'modify_views_users_so_15295853' );
+
+function modify_views_users_so_15295853( $views ) 
+{
+    // Manipulate $views
+    
+    print_r( $views );
+    die;
+
+    return $views;
+}
+
+function my_custom_bulk_actions( $actions ){
+        $actions['verify'] = __( 'Verify user', 'sha-ureg' );
+        $actions['unverify'] = __( 'Unverify user', 'sha-ureg' );
+        return $actions;
+    }
+
+add_filter('bulk_actions-users','my_custom_bulk_actions');
+
+add_filter( 'handle_bulk_actions-users', 'my_bulk_action_handler', 10, 3 );
+ 
+function my_bulk_action_handler( $redirect_to, $doaction, $post_ids ) {
+var_dump( $doaction );die;
+  if ( $doaction !== 'email_to_eric' ) {
+    return $redirect_to;
+  }
+  foreach ( $post_ids as $post_id ) {
+    // Perform action for each post.
+  }
+  $redirect_to = add_query_arg( 'bulk_emailed_posts', count( $post_ids ), $redirect_to );
+  return $redirect_to;
+}
+//*/
+
+
+//Ajax processor for password change
+function sha_ureg_user_verification_ajax() {
+	global $sha_ureg_prefix;
+
+    $response = array(
+		'status'	=> 'failed'
+    );
+
+    // First check the nonce, if it fails the function will break
+    if ( wp_verify_nonce( sanitize_text_field( $_POST['security'] ), 'nonce' ) ) {
+		$user_id = get_current_user_id();
+		$upload_dir   = wp_upload_dir();
+		$user_upload_dir = sprintf( '%s/userdocs/%d', $upload_dir['basedir'], $user_id );
+		if ( !file_exists( $user_upload_dir ) ) {
+			mkdir( $user_upload_dir, 0775, true );
+		}
+
+		$existing_files = get_user_meta( $user_id, $sha_ureg_prefix . 'docs', true );
+		$existing_files = unserialize( $existing_files );
+
+		foreach ( $existing_files as $id => $existing_file ) {
+			if ( !in_array( $existing_file['filename'], $_POST['existing_files'] ) ) {
+				//echo $user_upload_dir . '/' . $existing_file['filename'];				
+				unset( $existing_files[ $id ] );
+				unlink( $user_upload_dir . '/' . $existing_file['filename'] );
+			}
+		}
+
+		$existing_files = array_values( $existing_files );
+
+		$files = array();
+		foreach ( array_keys( $_FILES['userfiles']['name'] ) as $id ) {
+			if ( $_FILES['userfiles']['error'][ $id ] != 0) {
+				continue;
+			}
+
+			$file_info = pathinfo( $_FILES['userfiles']['name'][ $id ] );
+			$file_name = uniqid() . '.' . $file_info['extension'];
+			$file_path = sprintf( '%s/%s', $user_upload_dir, $file_name );
+			if ( move_uploaded_file( $_FILES['userfiles']['tmp_name'][ $id ], $file_path ) ) {
+				$existing_files[] = array(
+					'name'			=> trim( $_FILES['userfiles']['name'][ $id ] ),
+					'filename'		=> $file_name
+				);
+			}
+
+			//if ( ) {
+				
+			//}
+		}
+		
+		//if ( !empty( $existing_files ) ) {
+			$response['status'] = 'success';
+			update_user_meta( $user_id, $sha_ureg_prefix . 'docs', serialize( $existing_files ) );
+		//}
+	} else {
+		$response['message'] = __( 'Wrong security nonce', 'b4s' );
+	}
+
+	header('Content-type: application/json');
+	echo json_encode( $response );
+	die;
+}
+
+
+//Enable the user with no privileges to run ajax_register() in AJAX
+add_action( 'wp_ajax_user_verification', 'sha_ureg_user_verification_ajax' );
+
+
+add_action( 'show_user_profile', 'wpse_237901_user_edit_section', 999 );
+add_action( 'edit_user_profile', 'wpse_237901_user_edit_section', 999 );
+
+function wpse_237901_user_edit_section() {
+	global $sha_ureg_prefix, $sha_payouts_prefix;
+
+    echo '<h2>Verification</h2>';
+    if ( defined('IS_PROFILE_PAGE') && IS_PROFILE_PAGE ) {
+    $user_id = get_current_user_id();
+	// If is another user's profile page
+	} elseif (! empty($_GET['user_id']) && is_numeric($_GET['user_id']) ) {
+		$user_id = $_GET['user_id'];
+	// Otherwise something is wrong.
+	} else {
+		die( 'No user id defined.' );
+	}
+
+    $verification_docs = get_user_meta( $user_id, $sha_ureg_prefix . 'docs', true );
+    $verification_docs = unserialize( $verification_docs );
+    $company_data = get_user_meta( $user_id, $sha_ureg_prefix . 'company_data', true );
+    $company_data = unserialize( $company_data );
+	$payouts_data = get_user_meta( $user_id, $sha_payouts_prefix . 'payout_data', true );
+	$payouts_data = unserialize( $payouts_data );
+
+    $field_mapping = array(
+		'company_name' => 'Full registered company name',
+		'name' => 'Your full name',
+		'id' => 'Company registration number',
+		'position'	=> 'Your position',
+		'address' => 'Registered company address',
+		'zip' => 'Post Code',
+		'city' => 'City',
+		'country' => 'Company registration country',
+		'description' => 'Company description'
+	);
+
+    $docs_html = array();
+	$upload_dir   = wp_upload_dir();
+
+    foreach ( $verification_docs as $doc ) {
+		$docs_html[] = sprintf( '<a href="%s/userdocs/%d/%s" target="blank">%s</a>', $upload_dir['baseurl'], $user_id, $doc['filename'], $doc['name'] );
+	}
+	
+	foreach ( $company_data as $k => $v ) {
+		printf( '<strong>%s</strong> - %s<br />', $field_mapping[ $k ], ( $k == 'country' ) ? b4s_get_country_by_code( $v ) : $v );
+	}
+	
+	echo '<h3>Docs</h3>';
+	echo implode( ', ', $docs_html );
+	$status = get_user_meta( $user_id, $sha_ureg_prefix . 'company_status', true );
+	echo '<br /><select name="company_status">';
+	foreach ( array( 'unverified' => 'Unverified', 'verified' => 'Verified' ) as $k => $v ) {
+		$selected = ( $status == $k ) ? ' selected' : '';
+		printf( '<option value="%s"%s>%s</option>', $k, $selected, $v );
+	}
+	echo '</select>';
+	
+	echo '<h2>Payout addresses</h2>';
+	foreach ( $payouts_data as $cur => $payout_data ) {
+		echo '<div style="margin-bottom: 20px"><label for="' . $cur . '">' . strtoupper( $cur ) . ':</label> ';
+		echo '<select name="payout_status[' . $cur . ']" id="' . $cur . '">';
+		foreach ( array( 'inactive' => 'Inactive', 'active' => 'Active' ) as $k => $v ) {
+			$selected = ( $payout_data['status'] == $k ) ? ' selected' : '';
+			printf( '<option value="%s"%s>%s</option>', $k, $selected, $v );
+		}
+		echo '</select></div>';
+	}
+}
+
+
+add_action( 'personal_options_update', 'save_extra_user_fields' );
+add_action( 'edit_user_profile_update', 'save_extra_user_fields' );
+function save_extra_user_fields( $user_id ) {
+	global $sha_ureg_prefix, $sha_payouts_prefix;
+
+	$payouts_data = get_user_meta( $user_id, $sha_payouts_prefix . 'payout_data', true );
+	$payouts_data = unserialize( $payouts_data );
+	foreach ( $_POST['payout_status'] as $cur_symbol => $status ) {
+		$payouts_data[ $cur_symbol ]['status'] = $status;
+	}
+
+	update_user_meta( $user_id, $sha_payouts_prefix . 'payout_data', serialize( $payouts_data ) );
+	update_user_meta( $user_id, $sha_ureg_prefix . 'company_status', sanitize_text_field( $_POST['company_status'] ) );
+}
+
